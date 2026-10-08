@@ -31,6 +31,13 @@
     run. Interactive runs ask; this switch makes the answer Yes (and is the only way to get it with -Unattended).
     With -WhatIf the pending updates are listed but nothing is downloaded.
 
+.PARAMETER UpdateDay
+    Maintenance window day for scheduled update installs and restarts (step 13): 0 = every day, 1 = Sunday
+    (default) ... 7 = Saturday. Used by the first two Windows Update behaviour options.
+
+.PARAMETER UpdateHour
+    Maintenance window hour, local time, 0-23. Default 3 (03:00).
+
 .EXAMPLE
     # Download and run interactively
     Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.1.0/Optimize-RDSHost.ps1 -OutFile $env:TEMP\Optimize-RDSHost.ps1
@@ -58,7 +65,9 @@
 param(
     [switch]$Unattended,
     [switch]$NoReboot,
-    [switch]$InstallUpdates
+    [switch]$InstallUpdates,
+    [ValidateRange(0, 7)][int]$UpdateDay = 1,
+    [ValidateRange(0, 23)][int]$UpdateHour = 3
 )
 
 Set-StrictMode -Version 2.0
@@ -85,6 +94,7 @@ $script:RebootNeeded  = $false
 $script:RebootReasons = New-Object System.Collections.Generic.List[string]
 $script:ChangeCount   = 0
 $script:WarnCount     = 0
+$script:GpoManaged    = @{}          # "KEY\VALUE" (upper case, HKLM-relative) -> label of the GPO that owns it
 $script:DryRun        = $WhatIfPreference
 
 if (-not $DryRun) {
@@ -179,11 +189,14 @@ function Add-RebootReason { param([string]$Reason) $script:RebootNeeded = $true;
 function Get-RegValue {
     param([string]$Path, [string]$Name)
     if (-not (Test-Path -LiteralPath $Path)) { return $null }
-    $p = Get-ItemProperty -LiteralPath $Path -ErrorAction SilentlyContinue
-    if ($null -eq $p) { return $null }
-    $prop = $p.PSObject.Properties[$Name]
-    if ($null -eq $prop) { return $null }
-    return $prop.Value
+    # Read the one value through .NET. Get-ItemProperty marshals the whole key and throws 'Specified cast is not
+    # valid' on keys that hold an oddly-sized value (the Group Policy history keys do), even with -ErrorAction.
+    $k = $null
+    try {
+        $k = Get-Item -LiteralPath $Path -ErrorAction Stop
+        return $k.GetValue($Name, $null, 'DoNotExpandEnvironmentNames')
+    } catch { return $null }
+    finally { if ($null -ne $k) { $k.Close() } }
 }
 
 # Human-readable form of a Terminal Services time limit stored in milliseconds.
@@ -194,6 +207,43 @@ function Format-Ms {
     if ($v -eq 0) { return 'never (0)' }
     $m = $v / 60000
     if ($m -ge 60) { return ('{0:0.#} h' -f ($m / 60)) } else { return ('{0:0} min' -f $m) }
+}
+
+# Group Policy awareness. Registry-based policy arrives as registry.pol files ([MS-GPREG] "PReg" format). The
+# Registry client-side extension records every GPO it applied, with its SYSVOL path, under its History key, and
+# Windows also caches the files under System32\GroupPolicy\DataStore. Reading them tells us exactly which
+# key/value pairs Group Policy owns on this host, so the script skips those instead of fighting the next refresh.
+function Read-RegistryPol {
+    param([string]$File, [string]$Label)
+    try {
+        $b = [IO.File]::ReadAllBytes($File)
+        if ($b.Length -lt 8 -or [Text.Encoding]::ASCII.GetString($b, 0, 4) -ne 'PReg') { return }
+        $pos = 8
+        # Each record: '[' key NUL ';' value NUL ';' type(4 bytes) ';' size(4 bytes) ';' data ']'  - text is UTF-16LE
+        while ($pos + 2 -le $b.Length -and [BitConverter]::ToUInt16($b, $pos) -eq 0x5B) {
+            $pos += 2
+            $end = $pos; while ($end + 1 -lt $b.Length -and [BitConverter]::ToUInt16($b, $end) -ne 0) { $end += 2 }
+            $key = [Text.Encoding]::Unicode.GetString($b, $pos, $end - $pos); $pos = $end + 4
+            $end = $pos; while ($end + 1 -lt $b.Length -and [BitConverter]::ToUInt16($b, $end) -ne 0) { $end += 2 }
+            $val = [Text.Encoding]::Unicode.GetString($b, $pos, $end - $pos); $pos = $end + 4
+            $pos += 6
+            $size = [BitConverter]::ToInt32($b, $pos); $pos += 6
+            $pos += $size + 2
+            if ($val -like '**Del.*') { $val = $val.Substring(6) }      # "delete this value" entries own it just the same
+            if ($val -and -not $val.StartsWith('**')) { $script:GpoManaged[("$key\$val").ToUpperInvariant()] = $Label }
+        }
+    } catch { }
+}
+
+# Label of the GPO that owns an HKLM value, or $null. Only machine policy is tracked.
+function Test-GpoManaged {
+    param([string]$Path, [string]$Name)
+    if ($script:GpoManaged.Count -eq 0) { return $null }
+    if ($Path -match '^(HKLM:|Registry::HKEY_LOCAL_MACHINE)\\(.+)$') {
+        $k = ("$($Matches[2])\$Name").ToUpperInvariant()
+        if ($script:GpoManaged.ContainsKey($k)) { return $script:GpoManaged[$k] }
+    }
+    return $null
 }
 
 # Ask a yes/no question. Returns [bool]. Honours -Unattended via $Default.
@@ -256,10 +306,17 @@ function Set-RegValue {
     }
     $label = if ($Describe) { $Describe } else { "$Name" }
     $shown = if ($Type -eq 'Binary') { ($Value | ForEach-Object { '{0:x2}' -f $_ }) -join ',' } else { "$Value" }
-    if ($same) { Write-Info "$label already = $shown (no change)"; return }
+    $gpo   = Test-GpoManaged $Path $Name
+    if ($same) { Write-Info "$label already = $shown (no change$(if ($gpo) { "; set by $gpo" }))"; return }
 
     $was   = if ($existed) { if ($Type -eq 'Binary') { ($existing | ForEach-Object { '{0:x2}' -f $_ }) -join ',' } else { "$existing" } }
              elseif ($hiveUnloaded) { '<unknown - hive not loaded in dry run>' } else { '<not set>' }
+
+    # Owned by a GPO: whatever is written here is put back at the next policy refresh. Say so and leave it.
+    if ($gpo) {
+        Write-Warn "$label is controlled by $gpo (currently $was) - skipped. Change it in that GPO; anything written here is overwritten at the next policy refresh."
+        return
+    }
 
     if ($PSCmdlet.ShouldProcess("$Path\$Name", "Set to $shown (was $was)")) {
         if (-not (Test-Path -LiteralPath $Path)) { New-Item -Path $Path -Force | Out-Null }
@@ -363,6 +420,7 @@ if (-not $osName) {
 }
 
 $isVM     = ($cs.Model -match 'Virtual Machine|VMware|VirtualBox|KVM|QEMU|HVM')
+$domainJoined = [bool]$cs.PartOfDomain
 $hasGPU   = @(Get-CimInstance Win32_VideoController | Where-Object { $_.Name -notmatch 'Microsoft (Basic|Hyper-V|Remote)|VMware SVGA|VirtualBox|Standard VGA' }).Count -gt 0
 $tsplus   = (Test-Path 'C:\Program Files (x86)\TSplus') -or (Test-Path 'C:\Program Files\TSplus') -or (@(Get-Service -Name '*tsplus*' -ErrorAction SilentlyContinue).Count -gt 0)
 $sqlLocal = @(Get-Service -Name 'MSSQL$*','MSSQLSERVER' -ErrorAction SilentlyContinue | Where-Object { $_.StartType -ne 'Disabled' }).Count -gt 0
@@ -375,6 +433,27 @@ if (Get-Service -Name 'WSearch' -ErrorAction SilentlyContinue) {
     if ($wsearchStart -eq 'Auto') { $wsearchStart = 'Automatic' }
 }
 
+# Which of the policy values below does Group Policy already own? Read every applied GPO's registry.pol.
+$gpoHistory = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Group Policy\History\{35378EAC-683F-11D2-A89A-00C04FBBCFA2}'
+$gpoCache   = Join-Path $env:SystemRoot 'System32\GroupPolicy\DataStore'
+$gpoCount   = 0
+try {
+    if (Test-Path $gpoHistory) {
+        foreach ($h in @(Get-ChildItem -Path $gpoHistory -ErrorAction SilentlyContinue)) {
+            $fsp = Get-RegValue $h.PSPath 'FileSysPath'; $dn = Get-RegValue $h.PSPath 'DisplayName'; $gn = Get-RegValue $h.PSPath 'GPOName'
+            if (-not $fsp) { continue }
+            $glabel = if ($dn) { "GPO '$dn'" } elseif ($gn) { "GPO $gn" } else { 'a GPO' }
+            $pol = $null
+            try { $cand = Join-Path $fsp 'registry.pol'; if (Test-Path -LiteralPath $cand) { $pol = $cand } } catch { }
+            if (-not $pol -and $gn -and (Test-Path $gpoCache)) {
+                $pol = Get-ChildItem -Path $gpoCache -Recurse -Filter 'registry.pol' -ErrorAction SilentlyContinue |
+                       Where-Object { $_.FullName -like "*$gn*\Machine\registry.pol" } | Select-Object -First 1 -ExpandProperty FullName
+            }
+            if ($pol) { Read-RegistryPol $pol $glabel; $gpoCount++ }
+        }
+    }
+} catch { Write-Host "    .. Group Policy scan skipped: $($_.Exception.Message)" -ForegroundColor DarkGray }
+
 Write-Host ''
 Write-Host "  Detected" -ForegroundColor Cyan
 Write-Host ("    OS            : {0}  build {1}.{2}" -f $osName, $build, $ubr)
@@ -385,6 +464,8 @@ Write-Host ("    TSplus        : {0}" -f $(if ($tsplus) { 'detected' } else { 'n
 Write-Host ("    SQL Server    : {0}" -f $(if ($sqlLocal) { 'local instance running - scheduler choice will be asked' } else { 'none local' }))
 Write-Host ("    Defender      : {0}" -f $(if ($defender -and $defender.RealTimeProtectionEnabled) { 'real-time protection on' } else { 'off / not present' }))
 Write-Host ("    Windows Search: {0}" -f $(if ($wsearchStart -eq 'absent') { 'service not present' } elseif ($wsearchStart -eq 'Disabled') { 'service Disabled (Search Service feature not installed, or switched off)' } else { "service $wsearchStart" }))
+Write-Host ("    Domain        : {0}" -f $(if ($domainJoined) { "$($cs.Domain) - domain-joined; Group Policy can override any policy key below" } else { 'none (workgroup / standalone)' }))
+Write-Host ("    Group Policy  : {0}" -f $(if ($script:GpoManaged.Count) { "$gpoCount GPO(s) deliver registry policy here; $($script:GpoManaged.Count) value(s) are GPO-controlled - conflicts are flagged per step" } else { 'no registry policy from GPOs found on this host' }))
 Write-Host ("    Last update   : {0}" -f $(if ($lastCU) { "$($lastCU.HotFixID) on $($lastCU.InstalledOn.ToString('yyyy-MM-dd'))" } else { 'unknown' }))
 Write-Host ("    Sessions now  : {0} other user session(s)" -f (Get-OtherSessionCount))
 
@@ -417,6 +498,9 @@ if ($lastCU -and $lastCU.InstalledOn -lt (Get-Date).AddDays(-90)) {
 }
 if ($tsplus) {
     Write-Host "    Note TSplus detected. This script does NOT touch TSplus's own configuration (AdminTool settings, HTML5 gateway, Universal Printer). Set session timeouts in ONE place - see step 4." -ForegroundColor DarkGray
+}
+if ($domainJoined) {
+    Write-Wrapped "Note Domain-joined. This script writes the same HKLM\SOFTWARE\Policies keys a GPO writes. Anything a GPO also configures is re-applied at the next policy refresh (at boot and every 90 minutes) and the GPO wins, so those values are flagged and skipped below - change them in the GPO. After a live run, do 'gpupdate /force' and run this script again with -WhatIf: anything that shows as changing again is GPO-controlled and was missed." -Indent 4 -Color DarkGray
 }
 if ($rdsRole -eq $false -and -not $tsplus) {
     Write-Warn "Neither the RD Session Host role nor TSplus is present. Without one, this server only allows 2 admin RDP sessions. The tuning still applies, but confirm this is the right box."
@@ -516,7 +600,37 @@ if ($defender -and $defender.RealTimeProtectionEnabled) {
 $Decisions.DisableSysMain = Ask-YesNo "Disable SysMain (Superfetch)?" $true "Tuned for single-user desktops; pointless on an SSD-backed multi-user VM."
 $Decisions.DisableWER     = Ask-YesNo "Disable Windows Error Reporting?" $true "Stops crash-dialog stalls and dump collection inside user sessions."
 
-# --- Windows Update ---
+# --- Windows Update behaviour ---
+$WU_POL   = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+$AU_POL   = "$WU_POL\AU"
+$dayNames = @('every day', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday')
+$window   = '{0} {1:00}:00' -f $dayNames[$UpdateDay], $UpdateHour
+$curAUO   = Get-RegValue $AU_POL 'AUOptions'
+$curDay   = Get-RegValue $AU_POL 'ScheduledInstallDay'
+$curHour  = Get-RegValue $AU_POL 'ScheduledInstallTime'
+$curNoRb  = Get-RegValue $AU_POL 'NoAutoRebootWithLoggedOnUsers'
+$curWsus  = if ((Get-RegValue $AU_POL 'UseWUServer') -eq 1) { Get-RegValue $WU_POL 'WUServer' } else { $null }
+$auText   = if ($null -eq $curAUO) { 'not configured (Windows default: auto-install and restart outside active hours, on its own schedule)' }
+            elseif ([int]$curAUO -eq 4) {
+                $sched = ''
+                if ($null -ne $curDay -and [int]$curDay -ge 0 -and [int]$curDay -le 7 -and $null -ne $curHour) { $sched = ' ' + $dayNames[[int]$curDay] + (' {0:00}:00' -f [int]$curHour) }
+                "scheduled install$sched"
+            }
+            elseif ([int]$curAUO -eq 3) { 'auto download, notify to install' }
+            elseif ([int]$curAUO -eq 2) { 'notify before download' }
+            else { "option $curAUO" }
+$rbText   = if ($null -eq $curNoRb) { 'not configured' } elseif ([int]$curNoRb -eq 1) { 'blocked' } else { 'allowed' }
+$wuBehDetail = "A session host should patch at a predictable time and never restart in the working day. Active hours 06:00-20:00 are set by every option except 'leave as-is'. The window is $window - change it with -UpdateDay (0 = every day, 1 = Sunday .. 7 = Saturday) and -UpdateHour. WSUS, where present, still decides WHAT is approved; this decides WHEN it installs and restarts."
+$wuBehDetail += "`n`nCurrently on this host: automatic updates = $auText; restart with users logged on = $rbText; source = $(if ($curWsus) { "WSUS $curWsus" } else { 'Microsoft Update' })."
+$gpoAU = Test-GpoManaged $AU_POL 'AUOptions'
+if ($gpoAU) { $wuBehDetail += " Automatic Updates is controlled by $gpoAU - choose 'leave as-is' unless you are changing that GPO." }
+$Decisions.UpdateMode = Ask-Choice "Windows Update behaviour?" @(
+    "Install in the window ($window) and restart then if needed - 15-minute warning to anyone still logged on (default)",
+    "Install in the window ($window), restart only once nobody is logged on",
+    'Download and notify only - an admin installs and restarts by hand',
+    'Leave as-is (WSUS, GPO or RMM already manages it)') $(if ($gpoAU) { 3 } else { 0 }) $wuBehDetail
+
+# --- Windows Update: install now ---
 $wuDetail = "Uses the Windows Update Agent built into the OS - no modules, nothing extra downloaded. Lists what is pending, then downloads and installs it after the tuning changes (step 16). A cumulative update takes 10-30 minutes and needs a reboot. With -WhatIf it only lists. Updates are not covered by the rollback script (use 'wusa /uninstall /kb:NNNNNNN')."
 if ($build -eq 26100 -and $ubr -lt 3775) { $wuDetail += "`n`nThis host is inside the Server 2025 RDP freeze range - the fix (KB5055523 or later) arrives as a pending cumulative update." }
 if ($lastCU -and $lastCU.InstalledOn -lt (Get-Date).AddDays(-90)) { $wuDetail += "`n`nThis host is more than 90 days behind. Patching it is the single most effective step on this list." }
@@ -838,15 +952,44 @@ Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTe
 # =====================================================================================
 
 Write-Step 13 "Windows Update behaviour" `
-"Never auto-reboot while users are logged on, and keep active hours covering the business day so a session host
-does not restart itself at 2 pm. This does NOT stop updates installing - patch cadence is still your job (and on
-Server 2025 the RDP freeze regression is the reason to stay current)."
+"When the host patches itself. Active hours 06:00-20:00 stop restarts in the working day. The scheduled install
+uses the classic AUOptions=4 day/time schedule, which Server 2019/2022/2025 still honour. 'Always restart at the
+scheduled time' only works while 'no auto-restart with logged-on users' is off - they are mutually exclusive, so
+each option sets both. The -InstallUpdates step at the end is separate: that is 'patch now', this is 'patch on a
+schedule from now on'."
 
-$AU = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
-Set-RegValue $AU 'NoAutoRebootWithLoggedOnUsers' 1 -Describe 'No auto-reboot with logged-on users'
-Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'SetActiveHours' 1 -Describe 'Active hours (enforced)'
-Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'ActiveHoursStart' 6  -Describe 'Active hours start (06:00)'
-Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate' 'ActiveHoursEnd'   20 -Describe 'Active hours end (20:00)'
+if ($Decisions.UpdateMode -le 2) {
+    Set-RegValue $WU_POL 'SetActiveHours'   1  -Describe 'Active hours (enforced)'
+    Set-RegValue $WU_POL 'ActiveHoursStart' 6  -Describe 'Active hours start (06:00)'
+    Set-RegValue $WU_POL 'ActiveHoursEnd'   20 -Describe 'Active hours end (20:00)'
+    Set-RegValue $AU_POL 'NoAutoUpdate' 0 -Describe 'Automatic Updates (on)'
+}
+if ($Decisions.UpdateMode -le 1) {
+    Set-RegValue $AU_POL 'AUOptions' 4 -Describe 'Automatic Updates mode (4 = auto download, scheduled install)'
+    Set-RegValue $AU_POL 'AutomaticMaintenanceEnabled' 0 -Describe 'Install during automatic maintenance (off - the schedule below applies)'
+    Set-RegValue $AU_POL 'ScheduledInstallDay'  $UpdateDay  -Describe "Scheduled install day ($($dayNames[$UpdateDay]))"
+    Set-RegValue $AU_POL 'ScheduledInstallTime' $UpdateHour -Describe ('Scheduled install time ({0:00}:00)' -f $UpdateHour)
+    if ($UpdateDay -ne 0) { Set-RegValue $AU_POL 'ScheduledInstallEveryWeek' 1 -Describe 'Scheduled install every week' }
+}
+switch ($Decisions.UpdateMode) {
+    0 {
+        Set-RegValue $AU_POL 'NoAutoRebootWithLoggedOnUsers' 0 -Describe 'No auto-restart with logged-on users (off - the scheduled restart must win)'
+        Set-RegValue $AU_POL 'AlwaysAutoRebootAtScheduledTime' 1 -Describe 'Always restart at the scheduled time (on)'
+        Set-RegValue $AU_POL 'AlwaysAutoRebootAtScheduledTimeMinutes' 15 -Describe 'Warning before the scheduled restart (15 min)'
+        Write-Info "Anyone still logged on at $window gets a 15-minute countdown, then the host restarts. The disconnected-session limit in step 4 keeps stale sessions from piling up before then."
+    }
+    1 {
+        Set-RegValue $AU_POL 'NoAutoRebootWithLoggedOnUsers' 1 -Describe 'No auto-restart with logged-on users (on)'
+        Set-RegValue $AU_POL 'AlwaysAutoRebootAtScheduledTime' 0 -Describe 'Always restart at the scheduled time (off)'
+        Write-Info "The restart waits until no session - active OR disconnected - remains. One user who never logs off can hold a pending restart for weeks; the step-4 limit is what prevents that."
+    }
+    2 {
+        Set-RegValue $AU_POL 'AUOptions' 3 -Describe 'Automatic Updates mode (3 = auto download, notify to install)'
+        Set-RegValue $AU_POL 'NoAutoRebootWithLoggedOnUsers' 1 -Describe 'No auto-restart with logged-on users (on)'
+        Set-RegValue $AU_POL 'AlwaysAutoRebootAtScheduledTime' 0 -Describe 'Always restart at the scheduled time (off)'
+    }
+    3 { Write-Skip "Windows Update behaviour left as-is (managed elsewhere)." }
+}
 
 # =====================================================================================
 # 14. Defender exclusions
@@ -988,6 +1131,7 @@ Write-Host "  Verify after reconnecting (Ctrl+Alt+End is unaffected):" -Foregrou
 Write-Host "    - Client: click the connection-quality icon in the RDP bar -> should show UDP if enabled and the client allows it"
 Write-Host "    - Server: Get-ItemProperty '$TS_POL' | Format-List"
 Write-Host "    - Server: query session  (confirm disconnected sessions end after the configured window)"
+if ($domainJoined) { Write-Host "    - Domain-joined: gpupdate /force, then re-run this script with -WhatIf - anything listed as changing again is owned by a GPO" }
 
 if (-not $DryRun) { Stop-Transcript | Out-Null }
 

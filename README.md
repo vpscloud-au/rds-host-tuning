@@ -9,7 +9,7 @@ Built for the common case: 5–15 concurrent users on a VM without a GPU, most o
 Elevated PowerShell on the session host:
 
 ```powershell
-# Interactive — asks ~14 questions, then runs unattended
+# Interactive — asks ~16 questions, then runs unattended
 Set-ExecutionPolicy -Scope Process Bypass -Force
 & ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.1.0/Optimize-RDSHost.ps1)))
 
@@ -49,9 +49,9 @@ Every run writes a transcript and a **rollback script** to `C:\ProgramData\RDSOp
 | Visual effects | Best performance + font smoothing + drag-full-windows, applied to Default User and (optionally) existing profiles | Every animation is extra frames the encoder has to ship |
 | Profiles | Delete local profiles unused for N days *(prompt)*; stop Windows auto-switching default printer | Profile bloat is the slow-death mode of session hosts |
 | Services | SysMain, WER, DiagTrack off; Delivery Optimization peer caching off | Desktop-tuned background noise |
-| Windows Update | No auto-reboot with users logged on; active hours 06–20 | Patch cadence is still your job — see below |
+| Windows Update behaviour | Install and restart in a maintenance window *(prompt; default Sunday 03:00, `-UpdateDay` / `-UpdateHour`)* with a 15-minute warning to anyone still logged on; or restart only when nobody is logged on; or download-and-notify; or leave as-is. Active hours 06–20 in every case | A session host should patch at a predictable time and never restart in the working day. WSUS still decides *what* is approved; this decides *when* |
 | Defender | Path exclusions for TSplus and browser caches *(prompt)* | Exclusions only; real-time protection stays on |
-| Windows Update | Opt-in *(prompt, default No; `-InstallUpdates` for unattended)*: scan with the built-in Windows Update Agent, list what is pending, download and install it last. `-WhatIf` only lists | A host a year behind on cumulative updates has problems no tuning fixes (the Server 2025 RDP freeze is one). No modules, no extra downloads |
+| Windows Update, install now | Opt-in *(prompt, default No; `-InstallUpdates` for unattended)*: scan with the built-in Windows Update Agent, list what is pending, download and install it last. `-WhatIf` only lists | A host a year behind on cumulative updates has problems no tuning fixes (the Server 2025 RDP freeze is one). No modules, no extra downloads |
 
 ### What it deliberately does not touch
 
@@ -72,6 +72,29 @@ The script refuses to run on client Windows or unrecognised server builds, then 
 - **Any** — warns if the last cumulative update is older than 90 days, and offers to install what is pending (see the Windows Update row above).
 
 It also detects a dedicated GPU (leaves hardware-encode settings alone and tells you to review them), a local SQL Server instance (changes the scheduler default), TSplus, and the RD Session Host role.
+
+## Domain-joined hosts and Group Policy
+
+The script writes to the same `HKLM\SOFTWARE\Policies` keys that Group Policy writes to. On a domain-joined host that has consequences:
+
+- **A GPO always wins.** Group Policy re-applies its settings at boot and roughly every 90 minutes. Any value a GPO configures is put back, whatever this script wrote. So the script reads the `registry.pol` of every GPO applied to the machine (from the Registry client-side extension's history, falling back to the local policy cache), reports in the detection block how many values are GPO-controlled, and skips each one with a warning that names the GPO. Change those in the GPO.
+- **Values no GPO configures stay.** Group Policy only manages the values it is told about, so everything else the script sets persists across refreshes.
+- **Per-user settings and roaming profiles.** The Default User hive edits apply when a profile is first created, roaming or not. Edits to existing local profiles are lost for roaming users at next logon when the server copy comes down; for them, use User Configuration > Preferences > Registry in a GPO instead.
+- **Verify after a live run:** `gpupdate /force`, then run the script again with `-WhatIf`. Anything that shows as changing again is controlled by a GPO the script did not see.
+- **For a fleet, prefer a GPO.** Put the session hosts in their own OU and build a GPO from the table below. Keep the script for standalone hosts, for a quick audit (`-WhatIf`), and for the parts a GPO cannot do (Default User hive, existing profiles, patch-now).
+
+| Script area | Where it lives in a GPO (Computer Configuration > Policies > Administrative Templates unless noted) |
+|---|---|
+| RDP graphics, transport, keep-alive, redirection, Easy Print, session limits, time zone | Windows Components > Remote Desktop Services > Remote Desktop Session Host > Remote Session Environment / Connections / Device and Resource Redirection / Printer Redirection / Session Time Limits |
+| Windows Search restrictions | Windows Components > Search |
+| Windows Update behaviour, active hours | Windows Components > Windows Update (on 2022/2025 under *Manage end user experience* and *Legacy Policies*) |
+| Consumer features, Spotlight, tips, widgets, Copilot, lock screen, first-logon animation, Start search web results | Windows Components > Cloud Content; News and interests; Windows Copilot; Control Panel > Personalization; System > Logon; Windows Components > File Explorer |
+| Edge first-run, startup boost, background mode | Microsoft Edge (needs the Edge ADMX) |
+| Profile cleanup | System > User Profiles > Delete user profiles older than a specified number of days on system restart |
+| Delivery Optimization, telemetry, Error Reporting | Windows Components > Delivery Optimization; Data Collection and Preview Builds; Windows Error Reporting |
+| Defender exclusions | Windows Components > Microsoft Defender Antivirus > Exclusions |
+| Scheduler quantum, 8.3 names, DWM frame interval, Server Manager at logon, services, defrag task, power plan | No Administrative Template: Preferences > Windows Settings > Registry, and Control Panel Settings > Services / Scheduled Tasks / Power Options |
+| Visual effects, content delivery, default-printer mode (per user) | User Configuration > Preferences > Windows Settings > Registry, or leave it to the Default User hive |
 
 ## Verifying it worked
 

@@ -13,11 +13,13 @@ First version verified with a `-WhatIf` run on a real Server 2025 host (26100.65
 - **Changed (default):** "redirect only the default client printer" now defaults to the host's current setting instead of No, so printing behaviour never changes unless you choose it.
 - **Added:** `-InstallUpdates` and a Windows Update question. Opt-in: scans with the built-in Windows Update Agent (COM, no modules), lists pending updates, and installs them as the last step. `-WhatIf` only lists. Covers the Server 2025 RDP freeze fix without hard-coding a KB.
 - **Added:** session-limit, single-session and default-printer prompts show the host's current values, with a nudge when a disconnected-session limit is under 10 minutes (TSplus AdminTool writes the same registry values).
-- **Added:** "Windows Search" line in the detection block.
+- **Added:** Windows Update behaviour prompt replacing the fixed "no auto-reboot + active hours" step: install and restart in a maintenance window (default Sunday 03:00; `-UpdateDay`, `-UpdateHour`) with a 15-minute warning, or restart only when nobody is logged on, or download-and-notify, or leave as-is. Active hours 06-20 stay in every case but the last.
+- **Added:** Group Policy awareness. The script reads the `registry.pol` of every GPO applied to the machine, reports how many values are GPO-controlled in the detection block, and skips each one with a warning naming the GPO instead of writing a value the next refresh would undo. Domain membership is shown too. README gains a section on domain-joined hosts with a GPO location table.
+- **Added:** "Windows Search", "Domain" and "Group Policy" lines in the detection block.
 - **Improved:** explanatory text and prompt details are word-wrapped to the console width instead of hard-wrapped at ~115 columns, which produced ragged breaks on a 120-column window.
 - **Improved:** the dry run now lists every value a live run would set in the Default User hive (current values shown as unknown, since the hive is not loaded in a dry run) and says "would be updated" for existing profiles.
 - **Improved:** the twelve `What if: Performing the operation "Set Alias"` lines that the CimCmdlets module printed before the banner under `-WhatIf` are gone (module is imported with WhatIf temporarily off). The dry run no longer creates `C:\ProgramData\RDSOptimize` either.
-- **Improved:** registry values are read by exact name; a value name containing `*` (the Search path exclusion) is no longer treated as a wildcard.
+- **Improved:** registry values are read by exact name through the .NET registry API; a value name containing `*` (the Search path exclusion) is no longer treated as a wildcard, and keys that make `Get-ItemProperty` throw "Specified cast is not valid" (the Group Policy history keys do) no longer abort the run.
 - Summary "After reboot" line lists profile cleanup only when it was configured.
 
 ## [1.0.1] - 2026-10-08
