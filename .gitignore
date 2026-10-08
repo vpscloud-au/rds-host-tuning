@@ -1,0 +1,5 @@
+# Local run artefacts if anyone tests from a checkout on a Windows box
+*.log
+Rollback_*.ps1
+Thumbs.db
+.DS_Store
