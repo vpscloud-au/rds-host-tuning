@@ -26,10 +26,10 @@
 .PARAMETER NoReboot
     Do not offer a reboot at the end (some changes need one - the script tells you which).
 
-.PARAMETER InstallUpdates
-    Scan Windows Update with the built-in Windows Update Agent and install pending updates at the end of the
-    run. Interactive runs ask; this switch makes the answer Yes (and is the only way to get it with -Unattended).
-    With -WhatIf the pending updates are listed but nothing is downloaded.
+.PARAMETER SkipUpdates
+    Do not scan or install Windows updates at the end of the run. By default the script scans with the built-in
+    Windows Update Agent and installs what is pending as its last step (interactive runs ask, default Yes).
+    With -WhatIf the pending updates are only listed.
 
 .PARAMETER UpdateDay
     Maintenance window day for scheduled update installs and restarts (step 13): 0 = every day, 1 = Sunday
@@ -45,8 +45,8 @@
     & $env:TEMP\Optimize-RDSHost.ps1
 
 .EXAMPLE
-    # One-liner straight from the web server, unattended, and patch the host while you are at it
-    & ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.1.0/Optimize-RDSHost.ps1))) -Unattended -InstallUpdates
+    # One-liner straight from the web server, unattended (patches the host too; add -SkipUpdates to leave Windows Update alone)
+    & ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.1.0/Optimize-RDSHost.ps1))) -Unattended
 
 .EXAMPLE
     # Dry run
@@ -65,7 +65,7 @@
 param(
     [switch]$Unattended,
     [switch]$NoReboot,
-    [switch]$InstallUpdates,
+    [switch]$SkipUpdates,
     [ValidateRange(0, 7)][int]$UpdateDay = 1,
     [ValidateRange(0, 23)][int]$UpdateHour = 3
 )
@@ -476,7 +476,7 @@ switch ($build) {
     26100 {
         # Feb 2025 CU (KB5051987, UBR 3194) froze RDP sessions shortly after connect. Fixed by KB5055523 (April 2025, UBR 3775).
         if ($ubr -ge 3194 -and $ubr -lt 3775) {
-            Write-Warn "Server 2025 build 26100.$ubr is in the range affected by the Feb-2025 RDP freeze regression (KB5051987). Install the April 2025 CU (KB5055523, 26100.3775) or later BEFORE relying on this host. No tuning here fixes that bug - answer Yes to the Windows Update question (or run with -InstallUpdates) and this run will install it."
+            Write-Warn "Server 2025 build 26100.$ubr is in the range affected by the Feb-2025 RDP freeze regression (KB5051987). Install the April 2025 CU (KB5055523, 26100.3775) or later BEFORE relying on this host. No tuning here fixes that bug - the Windows Update step at the end of this run installs it unless you say No (or pass -SkipUpdates)."
         } elseif ($ubr -lt 3194) {
             Write-Warn "Server 2025 build 26100.$ubr predates Feb 2025 - this host has not been patched in a long time. Patch it."
         } else {
@@ -494,7 +494,7 @@ switch ($build) {
     }
 }
 if ($lastCU -and $lastCU.InstalledOn -lt (Get-Date).AddDays(-90)) {
-    Write-Warn "Last update installed $([int]((Get-Date) - $lastCU.InstalledOn).TotalDays) days ago. This host is behind on cumulative updates - the Windows Update question below (or -InstallUpdates) can fix that in this run."
+    Write-Warn "Last update installed $([int]((Get-Date) - $lastCU.InstalledOn).TotalDays) days ago. This host is behind on cumulative updates - the Windows Update step at the end of this run fixes that unless you say No (or pass -SkipUpdates)."
 }
 if ($tsplus) {
     Write-Host "    Note TSplus detected. This script does NOT touch TSplus's own configuration (AdminTool settings, HTML5 gateway, Universal Printer). Set session timeouts in ONE place - see step 4." -ForegroundColor DarkGray
@@ -566,7 +566,7 @@ if ($tsplus) { $sessDetail += " TSplus AdminTool (Server > Group Policies) write
 $sessDetail += "`n`nCurrently on this host: disconnected-session limit = $(Format-Ms $curMDT), idle limit = $(Format-Ms $curMIT)."
 if ($null -ne $curMDT -and [int64]$curMDT -gt 0 -and [int64]$curMDT -lt 600000) { $sessDetail += " A limit under 10 minutes logs users off after a short WAN blip and unsaved work is lost - make sure that is deliberate." }
 $choice = Ask-Choice "End DISCONNECTED sessions after how long?" @(
-    '2 hours', '4 hours (default)', '8 hours', '0 - do not set (TSplus or GPO manages it)') $(if ($tsplus) { 3 } else { 1 }) $sessDetail
+    '2 hours', '4 hours (default)', '8 hours', '0 - do not set (TSplus or GPO manages it)') 1 $sessDetail
 $Decisions.DisconnectHrs = @(2, 4, 8, 0)[$choice]
 $Decisions.SingleSession = Ask-YesNo "Restrict each user to a single session?" $true `
     "Stops the 'I have three sessions open' memory bloat. TSplus also expects this. Say No only if you deliberately run multi-session users.`n`nCurrently on this host: $(if ($null -eq $curSSP) { 'not configured (Windows default is one session per user)' } elseif ([int]$curSSP -eq 1) { 'single session enforced' } else { 'multiple sessions per user explicitly allowed - someone chose that' })."
@@ -625,16 +625,16 @@ $wuBehDetail += "`n`nCurrently on this host: automatic updates = $auText; restar
 $gpoAU = Test-GpoManaged $AU_POL 'AUOptions'
 if ($gpoAU) { $wuBehDetail += " Automatic Updates is controlled by $gpoAU - choose 'leave as-is' unless you are changing that GPO." }
 $Decisions.UpdateMode = Ask-Choice "Windows Update behaviour?" @(
-    "Install in the window ($window) and restart then if needed - 15-minute warning to anyone still logged on (default)",
-    "Install in the window ($window), restart only once nobody is logged on",
+    "Install in the window ($window) and restart then if needed - 15-minute warning to anyone still logged on",
+    "Install in the window ($window), restart only once nobody is logged on (default)",
     'Download and notify only - an admin installs and restarts by hand',
-    'Leave as-is (WSUS, GPO or RMM already manages it)') $(if ($gpoAU) { 3 } else { 0 }) $wuBehDetail
+    'Leave as-is (WSUS, GPO or RMM already manages it)') $(if ($gpoAU) { 3 } else { 1 }) $wuBehDetail
 
 # --- Windows Update: install now ---
 $wuDetail = "Uses the Windows Update Agent built into the OS - no modules, nothing extra downloaded. Lists what is pending, then downloads and installs it after the tuning changes (step 16). A cumulative update takes 10-30 minutes and needs a reboot. With -WhatIf it only lists. Updates are not covered by the rollback script (use 'wusa /uninstall /kb:NNNNNNN')."
 if ($build -eq 26100 -and $ubr -lt 3775) { $wuDetail += "`n`nThis host is inside the Server 2025 RDP freeze range - the fix (KB5055523 or later) arrives as a pending cumulative update." }
 if ($lastCU -and $lastCU.InstalledOn -lt (Get-Date).AddDays(-90)) { $wuDetail += "`n`nThis host is more than 90 days behind. Patching it is the single most effective step on this list." }
-$Decisions.InstallUpdates = Ask-YesNo "Scan Windows Update and install pending updates at the end of this run?" ([bool]$InstallUpdates) $wuDetail
+$Decisions.InstallUpdates = Ask-YesNo "Scan Windows Update and install pending updates at the end of this run?" (-not $SkipUpdates) $wuDetail
 
 Write-Host ''
 Write-Host "  Decisions recorded. Applying." -ForegroundColor Cyan
@@ -955,7 +955,7 @@ Write-Step 13 "Windows Update behaviour" `
 "When the host patches itself. Active hours 06:00-20:00 stop restarts in the working day. The scheduled install
 uses the classic AUOptions=4 day/time schedule, which Server 2019/2022/2025 still honour. 'Always restart at the
 scheduled time' only works while 'no auto-restart with logged-on users' is off - they are mutually exclusive, so
-each option sets both. The -InstallUpdates step at the end is separate: that is 'patch now', this is 'patch on a
+each option sets both. The patch-now step at the end (16) is separate: that is 'patch now', this is 'patch on a
 schedule from now on'."
 
 if ($Decisions.UpdateMode -le 2) {
@@ -1083,7 +1083,7 @@ if ($Decisions.InstallUpdates) {
     } catch {
         Write-Warn "Windows Update step did not complete: $($_.Exception.Message)"
     }
-} else { Write-Skip "Windows Update not scanned (declined, or -InstallUpdates not given)." }
+} else { Write-Skip "Windows Update not scanned (declined, or -SkipUpdates given)." }
 
 # =====================================================================================
 #  Wrap-up
