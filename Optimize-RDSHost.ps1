@@ -1,11 +1,11 @@
 #Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Optimize-RDSHost.ps1 — tunes a Windows Server session host for RDP / TSplus users.
+    Optimize-RDSHost.ps1 - tunes a Windows Server session host for RDP / TSplus users.
 
 .DESCRIPTION
     Applies a curated set of registry, service and policy changes that improve the interactive
-    experience for 5–15 concurrent remote users, with WAN users as the default assumption.
+    experience for 5-15 concurrent remote users, with WAN users as the default assumption.
 
     Supports Windows Server 2019, 2022 and 2025. Detects the OS and adapts. Refuses to run on
     client Windows or on unsupported server builds.
@@ -24,24 +24,24 @@
     Show what would change without changing anything. Also skips the reboot prompt.
 
 .PARAMETER NoReboot
-    Do not offer a reboot at the end (some changes need one — the script tells you which).
+    Do not offer a reboot at the end (some changes need one - the script tells you which).
 
 .EXAMPLE
     # Download and run interactively
-    Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.0/Optimize-RDSHost.ps1 -OutFile $env:TEMP\Optimize-RDSHost.ps1
+    Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.1/Optimize-RDSHost.ps1 -OutFile $env:TEMP\Optimize-RDSHost.ps1
     Set-ExecutionPolicy -Scope Process Bypass -Force
     & $env:TEMP\Optimize-RDSHost.ps1
 
 .EXAMPLE
     # One-liner straight from the web server, unattended
-    & ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.0/Optimize-RDSHost.ps1))) -Unattended
+    & ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.1/Optimize-RDSHost.ps1))) -Unattended
 
 .EXAMPLE
     # Dry run
     .\Optimize-RDSHost.ps1 -WhatIf
 
 .NOTES
-    Version : 1.0.0  (2026-10-08)
+    Version : 1.0.1  (2026-10-08)
     Source  : https://github.com/vpscloud-au/rds-host-tuning
     Author  : VPSCloud Australia
     Tested  : Server 2019 (17763), 2022 (20348), 2025 (26100)
@@ -251,7 +251,7 @@ $WS_POL   = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'
 #  0. Pre-flight
 # =====================================================================================
 
-Write-Banner "Optimize-RDSHost v1.0.0 — session host tuning for RDP / TSplus  ($(if ($DryRun) {'DRY RUN'} else {'LIVE'}))"
+Write-Banner "Optimize-RDSHost v1.0.1 - session host tuning for RDP / TSplus  ($(if ($DryRun) {'DRY RUN'} else {'LIVE'}))"
 Write-Host "  Log      : $LogFile"
 Write-Host "  Rollback : $Rollback"
 Write-Host "  Mode     : $(if ($Unattended) {'Unattended (defaults)'} else {'Interactive'})"
@@ -293,10 +293,10 @@ Write-Host ''
 Write-Host "  Detected" -ForegroundColor Cyan
 Write-Host ("    OS            : {0}  build {1}.{2}" -f $osName, $build, $ubr)
 Write-Host ("    Hardware      : {0}{1}" -f $cs.Model, $(if ($isVM) { '  (virtual machine)' } else { '' }))
-Write-Host ("    GPU           : {0}" -f $(if ($hasGPU) { 'dedicated GPU present' } else { 'none — software RDP encoding' }))
+Write-Host ("    GPU           : {0}" -f $(if ($hasGPU) { 'dedicated GPU present' } else { 'none - software RDP encoding' }))
 Write-Host ("    RDS role      : {0}" -f $(if ($rdsRole) { 'RD Session Host installed' } else { 'not installed (admin-only RDP or TSplus)' }))
 Write-Host ("    TSplus        : {0}" -f $(if ($tsplus) { 'detected' } else { 'not detected' }))
-Write-Host ("    SQL Server    : {0}" -f $(if ($sqlLocal) { 'local instance running — scheduler choice will be asked' } else { 'none local' }))
+Write-Host ("    SQL Server    : {0}" -f $(if ($sqlLocal) { 'local instance running - scheduler choice will be asked' } else { 'none local' }))
 Write-Host ("    Defender      : {0}" -f $(if ($defender -and $defender.RealTimeProtectionEnabled) { 'real-time protection on' } else { 'off / not present' }))
 Write-Host ("    Last update   : {0}" -f $(if ($lastCU) { "$($lastCU.HotFixID) on $($lastCU.InstalledOn.ToString('yyyy-MM-dd'))" } else { 'unknown' }))
 Write-Host ("    Sessions now  : {0} other user session(s)" -f (Get-OtherSessionCount))
@@ -310,18 +310,18 @@ switch ($build) {
         if ($ubr -ge 3194 -and $ubr -lt 3775) {
             Write-Warn "Server 2025 build 26100.$ubr is in the range affected by the Feb-2025 RDP freeze regression (KB5051987). Install the April 2025 CU (KB5055523, 26100.3775) or later BEFORE relying on this host. No tuning here fixes that bug."
         } elseif ($ubr -lt 3194) {
-            Write-Warn "Server 2025 build 26100.$ubr predates Feb 2025 — this host has not been patched in a long time. Patch it."
+            Write-Warn "Server 2025 build 26100.$ubr predates Feb 2025 - this host has not been patched in a long time. Patch it."
         } else {
             Write-Host "    OK   Server 2025 build 26100.$ubr is past the Feb/Mar-2025 RDP freeze regression." -ForegroundColor Green
         }
         Write-Host "    Note Server 2025 ships the Windows 11 shell and Edge first-run experience; the consumer-feature cleanup in step 9 matters most here." -ForegroundColor DarkGray
     }
     20348 {
-        Write-Host "    OK   Server 2022 — no RDP-specific regressions tracked for the session-host role." -ForegroundColor Green
+        Write-Host "    OK   Server 2022 - no RDP-specific regressions tracked for the session-host role." -ForegroundColor Green
         Write-Host "    Note If this host is also an RD Gateway, early-2024 CUs caused RDG service crashes on UDP 3391; ensure it is current." -ForegroundColor DarkGray
     }
     17763 {
-        Write-Host "    OK   Server 2019 — mature. Some Server 2025-specific consumer-feature keys are harmless no-ops here and will be skipped." -ForegroundColor Green
+        Write-Host "    OK   Server 2019 - mature. Some Server 2025-specific consumer-feature keys are harmless no-ops here and will be skipped." -ForegroundColor Green
         Write-Warn "Server 2019 is in extended support only. Plan the move."
     }
 }
@@ -329,7 +329,7 @@ if ($lastCU -and $lastCU.InstalledOn -lt (Get-Date).AddDays(-90)) {
     Write-Warn "Last update installed $([int]((Get-Date) - $lastCU.InstalledOn).TotalDays) days ago. This host is behind on cumulative updates."
 }
 if ($tsplus) {
-    Write-Host "    Note TSplus detected. This script does NOT touch TSplus's own configuration (AdminTool settings, HTML5 gateway, Universal Printer). Set session timeouts in ONE place — see step 4." -ForegroundColor DarkGray
+    Write-Host "    Note TSplus detected. This script does NOT touch TSplus's own configuration (AdminTool settings, HTML5 gateway, Universal Printer). Set session timeouts in ONE place - see step 4." -ForegroundColor DarkGray
 }
 if ($rdsRole -eq $false -and -not $tsplus) {
     Write-Warn "Neither the RD Session Host role nor TSplus is present. Without one, this server only allows 2 admin RDP sessions. The tuning still applies, but confirm this is the right box."
@@ -346,18 +346,18 @@ if (-not (Ask-YesNo "Proceed with tuning this host?" $true)) {
 #  Decisions (asked up front so the run is uninterrupted after this point)
 # =====================================================================================
 
-Write-Banner "Decisions — answer once, the rest runs unattended"
+Write-Banner "Decisions - answer once, the rest runs unattended"
 
 $Decisions = [ordered]@{}
 
 # --- Link type ---
 $Decisions.Link = Ask-Choice "Where do most users connect from?" @(
-    'WAN / internet (default — 24-bit colour, 30 fps, keep-alives, UDP on)',
+    'WAN / internet (default - 24-bit colour, 30 fps, keep-alives, UDP on)',
     'LAN only (32-bit colour, 60 fps)') 0
 
 # --- Transport ---
 $Decisions.UDP = Ask-YesNo "Keep UDP transport enabled (TCP + UDP)?" $true `
-    "UDP is a real win on lossy WAN links. If users later report periodic freezes or black screens,`nre-run with 'No' here as a diagnostic — that forces TCP-only. Do not start with TCP-only."
+    "UDP is a real win on lossy WAN links. If users later report periodic freezes or black screens,`nre-run with 'No' here as a diagnostic - that forces TCP-only. Do not start with TCP-only."
 
 # --- Frame interval ---
 $fpsDefault = ($Decisions.Link -eq 1)
@@ -365,16 +365,16 @@ $Decisions.Fps60 = Ask-YesNo "Raise the DWM frame rate cap from ~30 to ~60 fps?"
     "Makes scrolling and window dragging feel much smoother. Costs bandwidth and encoder CPU.`nRecommended on LAN; usually not worth it over WAN. Needs a reboot."
 
 # --- Scheduler ---
-$schedDetail = "0x26 = short quantum, foreground boost — favours the interactive user, standard RDS tuning.`n0x18 = Server default — favours background services."
+$schedDetail = "0x26 = short quantum, foreground boost - favours the interactive user, standard RDS tuning.`n0x18 = Server default - favours background services."
 if ($sqlLocal) { $schedDetail += "`nA LOCAL SQL Server instance was detected. SQL runs as a background service; 0x26 slightly deprioritises it`nunder load. For 5-15 users with light SQL, 0x26 is still usually the better experience. Your call." }
 $Decisions.Sched = Ask-Choice "Processor scheduling (Win32PrioritySeparation)?" @(
-    'Foreground programs — 0x26 (default for session hosts)',
-    'Background services — 0x18 (Server default; choose if local SQL is the primary workload)') $(if ($sqlLocal) { 1 } else { 0 }) $schedDetail
+    'Foreground programs - 0x26 (default for session hosts)',
+    'Background services - 0x18 (Server default; choose if local SQL is the primary workload)') $(if ($sqlLocal) { 1 } else { 0 }) $schedDetail
 
 # --- Windows Search ---
 $Decisions.Search = Ask-Choice "Windows Search indexing?" @(
-    'Restrict (default) — index only the Start menu/apps; no Outlook, no user profiles, no UNC/removable',
-    'Disable the service entirely — users lose Outlook/Explorer search',
+    'Restrict (default) - index only the Start menu/apps; no Outlook, no user profiles, no UNC/removable',
+    'Disable the service entirely - users lose Outlook/Explorer search',
     'Leave as-is') 0 `
     "On a multi-user host, indexing every user's profile and Outlook OST is the classic hidden disk-I/O hog."
 
@@ -383,7 +383,7 @@ $Decisions.DisconnectHrs = 0
 $sessDetail = "Disconnected sessions hold RAM, handles and open files indefinitely unless a limit ends them."
 if ($tsplus) { $sessDetail += "`nTSplus has its own session timeout in AdminTool. Set the limit in ONE place only. If TSplus already does it, answer 0." }
 $choice = Ask-Choice "End DISCONNECTED sessions after how long?" @(
-    '2 hours', '4 hours (default)', '8 hours', '0 — do not set (TSplus or GPO manages it)') $(if ($tsplus) { 3 } else { 1 }) $sessDetail
+    '2 hours', '4 hours (default)', '8 hours', '0 - do not set (TSplus or GPO manages it)') $(if ($tsplus) { 3 } else { 1 }) $sessDetail
 $Decisions.DisconnectHrs = @(2, 4, 8, 0)[$choice]
 $Decisions.SingleSession = Ask-YesNo "Restrict each user to a single session?" $true `
     "Stops the 'I have three sessions open' memory bloat. TSplus also expects this. Say No only if you deliberately run multi-session users."
@@ -397,8 +397,8 @@ $Decisions.DefaultPrinterOnly = Ask-YesNo "Redirect ONLY the client's default pr
 # --- Profiles ---
 $Decisions.ProfileCleanupDays = 0
 $choice = Ask-Choice "Delete LOCAL user profiles unused for how long?" @(
-    '90 days (default)', '60 days', '30 days', 'Never — do not configure') 0 `
-    "Profile bloat is the slow-death mode of session hosts. Roaming profiles are unaffected (their local cache is rebuilt from AD at next logon).`nUses the standard 'Delete user profiles older than a specified number of days on system restart' policy — it runs at boot, not live."
+    '90 days (default)', '60 days', '30 days', 'Never - do not configure') 0 `
+    "Profile bloat is the slow-death mode of session hosts. Roaming profiles are unaffected (their local cache is rebuilt from AD at next logon).`nUses the standard 'Delete user profiles older than a specified number of days on system restart' policy - it runs at boot, not live."
 $Decisions.ProfileCleanupDays = @(90, 60, 30, 0)[$choice]
 
 # --- Visual effects on existing profiles ---
@@ -409,7 +409,7 @@ $Decisions.VfxExisting = Ask-YesNo "Also apply the visual-effects settings to EX
 $Decisions.DefenderExcl = $false
 if ($defender -and $defender.RealTimeProtectionEnabled) {
     $Decisions.DefenderExcl = Ask-YesNo "Add Defender exclusions for TSplus / RDS paths?" $true `
-        "Exclusions only — real-time protection stays on. Adds the TSplus program folder (if present) and the standard`nper-user browser-cache paths that generate thousands of tiny writes per session."
+        "Exclusions only - real-time protection stays on. Adds the TSplus program folder (if present) and the standard`nper-user browser-cache paths that generate thousands of tiny writes per session."
 }
 
 # --- Misc services ---
@@ -429,7 +429,7 @@ Write-Banner "Applying changes"
 Write-Step 1 "RDP graphics pipeline" `
 "Server-side policy keys that cap what the encoder has to do. Wallpaper removal is the single biggest bandwidth
 saving. Colour depth and image quality are pinned so neither a GPO nor a client .rdp file can push them to lossless.
-H.264/AVC444 is NOT forced — without a GPU that costs roughly one vCPU per active session for no gain."
+H.264/AVC444 is NOT forced - without a GPU that costs roughly one vCPU per active session for no gain."
 
 Set-RegValue $TS_POL 'fNoRemoteDesktopWallpaper' 1 -Describe 'Enforce removal of remote desktop wallpaper'
 Set-RegValue $TS_POL 'ColorDepth' $(if ($Decisions.Link -eq 0) { 3 } else { 4 }) -Describe "Max colour depth ($(if ($Decisions.Link -eq 0) {'24-bit, WAN'} else {'32-bit, LAN'}))"
@@ -437,9 +437,9 @@ Set-RegValue $TS_POL 'ImageQuality' 2 -Describe 'RemoteFX adaptive graphics imag
 Set-RegValue $TS_POL 'MaxCompressionLevel' 2 -Describe 'RDP compression (balanced)'
 Set-RegValue $TS_POL 'AVC444ModePreferred' 0 -Describe 'Prioritise H.264/AVC444 (off)'
 if ($hasGPU) {
-    Write-Warn "A dedicated GPU was detected. Leaving 'Use hardware graphics adapters' and AVC hardware encode at their current values — review manually: a GPU host SHOULD use them."
+    Write-Warn "A dedicated GPU was detected. Leaving 'Use hardware graphics adapters' and AVC hardware encode at their current values - review manually: a GPU host SHOULD use them."
 } else {
-    Set-RegValue $TS_POL 'bEnumerateHWBeforeSW' 0 -Describe 'Use hardware graphics adapters (off — no GPU)'
+    Set-RegValue $TS_POL 'bEnumerateHWBeforeSW' 0 -Describe 'Use hardware graphics adapters (off - no GPU)'
 }
 Set-RegValue $TS_POL 'fEnableTimeZoneRedirection' 1 -Describe 'Time zone redirection (users see their own local time)'
 
@@ -450,17 +450,17 @@ Set-RegValue $TS_POL 'fEnableTimeZoneRedirection' 1 -Describe 'Time zone redirec
 Write-Step 2 "Transport, frame rate and keep-alive" `
 "SelectTransport 0 = TCP+UDP, 1 = TCP only. Keep-alive every 1 minute lets the server detect a dropped WAN link
 promptly instead of leaving a zombie session holding the user's licence and files. The DWM frame interval is the
-one tweak users actually notice (15 ms ≈ 60 fps); it needs a reboot."
+one tweak users actually notice (15 ms ~ 60 fps); it needs a reboot."
 
 Set-RegValue $TS_POL 'SelectTransport' $(if ($Decisions.UDP) { 0 } else { 1 }) -Describe "RDP transport ($(if ($Decisions.UDP) {'TCP + UDP'} else {'TCP only'}))"
 Set-RegValue $TS_POL 'KeepAliveEnable' 1 -Describe 'Keep-alive connections'
 Set-RegValue $TS_POL 'KeepAliveInterval' 1 -Describe 'Keep-alive interval (minutes)'
 Set-RegValue $TS_POL 'fDisableAutoReconnect' 0 -Describe 'Automatic reconnection (allowed)'
 if ($Decisions.Fps60) {
-    Set-RegValue $TS_WS 'DWMFRAMEINTERVAL' 15 -Describe 'DWM frame interval (15 ms ≈ 60 fps)'
+    Set-RegValue $TS_WS 'DWMFRAMEINTERVAL' 15 -Describe 'DWM frame interval (15 ms ~ 60 fps)'
     Add-RebootReason 'DWMFRAMEINTERVAL (frame rate cap)'
 } else {
-    Write-Skip "DWM frame interval left at default (~30 fps) — right choice for WAN users."
+    Write-Skip "DWM frame interval left at default (~30 fps) - right choice for WAN users."
 }
 
 # =====================================================================================
@@ -469,7 +469,7 @@ if ($Decisions.Fps60) {
 
 Write-Step 3 "Device redirection" `
 "Each redirection channel is a per-session virtual-channel thread and adds logon latency. COM/LPT are removed by
-default. Audio playback, microphone, camera, clipboard, drive and PRINTER redirection are explicitly left enabled —
+default. Audio playback, microphone, camera, clipboard, drive and PRINTER redirection are explicitly left enabled  - 
 Teams/video in-session and client printing both depend on them. Easy Print is preferred first so client printers
 don't need matching drivers on the host."
 
@@ -499,7 +499,7 @@ if ($Decisions.DisconnectHrs -gt 0) {
     Set-RegValue $TS_POL 'MaxDisconnectionTime' ($Decisions.DisconnectHrs * 3600000) -Describe "End disconnected sessions after $($Decisions.DisconnectHrs) h"
     Set-RegValue $TS_POL 'fResetBroken' 1 -Describe 'Log off when limit reached'
 } else { Write-Skip "Disconnected-session limit not set (managed elsewhere)." }
-Set-RegValue $TS_POL 'MaxIdleTime' 0 -Describe 'Idle-session limit (none — disconnect limit is what matters)'
+Set-RegValue $TS_POL 'MaxIdleTime' 0 -Describe 'Idle-session limit (none - disconnect limit is what matters)'
 Set-RegValue $TS_POL 'fSingleSessionPerUser' $(if ($Decisions.SingleSession) { 1 } else { 0 }) -Describe "Single session per user ($(if ($Decisions.SingleSession) {'on'} else {'off'}))"
 
 # =====================================================================================
@@ -507,7 +507,7 @@ Set-RegValue $TS_POL 'fSingleSessionPerUser' $(if ($Decisions.SingleSession) { 1
 # =====================================================================================
 
 Write-Step 5 "Processor scheduling" `
-"Win32PrioritySeparation. 0x26 gives the foreground (the user's application) shorter, boosted quanta — the
+"Win32PrioritySeparation. 0x26 gives the foreground (the user's application) shorter, boosted quanta - the
 standard session-host setting. 0x18 is the Server default and favours background services such as SQL."
 
 $sep = if ($Decisions.Sched -eq 0) { 0x26 } else { 0x18 }
@@ -542,8 +542,8 @@ switch ($Decisions.Search) {
 # =====================================================================================
 
 Write-Step 7 "Storage and filesystem" `
-"Scheduled defrag is disabled — this host lives on SSD/SAN storage and defrag is pure wear. 8.3 short-name
-generation is disabled system-wide: dozens of profiles × tens of thousands of small files make it measurable.
+"Scheduled defrag is disabled - this host lives on SSD/SAN storage and defrag is pure wear. 8.3 short-name
+generation is disabled system-wide: dozens of profiles x tens of thousands of small files make it measurable.
 (Only affects files created from now on.) NTFS last-access updates are already off on Server by default."
 
 Set-ScheduledTaskState -TaskPath '\Microsoft\Windows\Defrag\' -TaskName 'ScheduledDefrag' -Enabled $false -Describe 'Scheduled defrag task'
@@ -555,8 +555,8 @@ Add-RebootReason '8.3 name creation setting'
 # =====================================================================================
 
 Write-Step 8 "Power plan" `
-"High Performance. In a Hyper-V/VMware guest this mostly affects timer coalescing rather than CPU frequency — the
-HOST's power plan is what governs clocks — but Balanced in the guest still adds latency under bursty load."
+"High Performance. In a Hyper-V/VMware guest this mostly affects timer coalescing rather than CPU frequency - the
+HOST's power plan is what governs clocks - but Balanced in the guest still adds latency under bursty load."
 
 $hp = '8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c'
 $active = (powercfg /getactivescheme) -replace '.*GUID:\s*([0-9a-f-]+).*', '$1'
@@ -585,12 +585,12 @@ Set-RegValue $POL_CDM 'DisableWindowsConsumerFeatures' 1 -Describe 'Windows cons
 Set-RegValue $POL_CDM 'DisableSoftLanding' 1 -Describe 'Tips/suggestions (off)'
 Set-RegValue $POL_CDM 'DisableWindowsSpotlightFeatures' 1 -Describe 'Windows Spotlight (off)'
 Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'HideFirstRunExperience' 1 -Describe 'Edge first-run experience (hidden)'
-Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'StartupBoostEnabled' 0 -Describe 'Edge startup boost (off — one less background process per user)'
+Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'StartupBoostEnabled' 0 -Describe 'Edge startup boost (off - one less background process per user)'
 Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Edge' 'BackgroundModeEnabled' 0 -Describe 'Edge background mode (off)'
 Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Feeds' 'EnableFeeds' 0 -Describe 'News & interests / widgets (off)'
 Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer' 'DisableSearchBoxSuggestions' 1 -Describe 'Web results in Start search (off)'
 Set-RegValue 'HKLM:\SOFTWARE\Microsoft\ServerManager' 'DoNotOpenServerManagerAtLogon' 1 -Describe 'Server Manager at logon (off)'
-Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization' 'NoLockScreen' 1 -Describe 'Lock screen (off — one less draw on connect)'
+Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Personalization' 'NoLockScreen' 1 -Describe 'Lock screen (off - one less draw on connect)'
 if ($build -ge 26100) {
     Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot' 'TurnOffWindowsCopilot' 1 -Describe 'Windows Copilot (off)'
     Set-RegValue $WS_POL 'EnableDynamicContentInWSB' 0 -Describe 'Search highlights / dynamic content in search box (off)'
@@ -609,13 +609,13 @@ if (Test-Path $DefaultHive) {
 }
 
 # =====================================================================================
-# 10. Visual effects — Default User hive (and optionally existing profiles)
+# 10. Visual effects - Default User hive (and optionally existing profiles)
 # =====================================================================================
 
 Write-Step 10 "Visual effects" `
 "'Best performance' with two things turned back on: font smoothing (text is unreadable without it over RDP) and
 'show window contents while dragging' (otherwise RDP shows a dragged outline that lags). Animations, fades,
-shadows, Aero Peek and transparency are all off — each one is extra frames the encoder has to ship."
+shadows, Aero Peek and transparency are all off - each one is extra frames the encoder has to ship."
 
 function Set-VfxInHive {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -642,10 +642,10 @@ function Set-VfxInHive {
 
 if ($loadedDefault) {
     try { Set-VfxInHive $DefaultKey 'Default User' } finally { $null = Invoke-RegUnload $DefaultKey }
-    Write-Result "Default User hive updated — all NEW profiles inherit these settings."
+    Write-Result "Default User hive updated - all NEW profiles inherit these settings."
 } elseif ($DryRun) {
     Write-Info "(dry run) Would load C:\Users\Default\NTUSER.DAT and apply visual-effects + content-delivery settings."
-} else { Write-Warn "Default User hive not found at $DefaultHive — new-profile defaults not applied." }
+} else { Write-Warn "Default User hive not found at $DefaultHive - new-profile defaults not applied." }
 
 if ($Decisions.VfxExisting) {
     $loadedSids = (Get-ChildItem Registry::HKEY_USERS | ForEach-Object { $_.PSChildName })
@@ -653,11 +653,11 @@ if ($Decisions.VfxExisting) {
     $done = 0; $skipped = 0
     foreach ($p in $profiles) {
         $name = Split-Path $p.LocalPath -Leaf
-        if ($loadedSids -contains $p.SID) { Write-Info "$name is logged on — hive in use, skipped (settings apply next time via GPO/logon, or re-run later)"; $skipped++; continue }
+        if ($loadedSids -contains $p.SID) { Write-Info "$name is logged on - hive in use, skipped (settings apply next time via GPO/logon, or re-run later)"; $skipped++; continue }
         $key = "HKU\RDSOPT_$($p.SID)"
         if ($PSCmdlet.ShouldProcess("Profile $name", 'Apply visual-effects settings')) {
             $r = Invoke-RegLoad $key (Join-Path $p.LocalPath 'NTUSER.DAT')
-            if (-not $r.Ok) { Write-Info "$name : hive could not be loaded ($($r.Out)) — skipped"; $skipped++; continue }
+            if (-not $r.Ok) { Write-Info "$name : hive could not be loaded ($($r.Out)) - skipped"; $skipped++; continue }
             $script:HiveFiles[$key] = (Join-Path $p.LocalPath 'NTUSER.DAT')
             try { Set-VfxInHive $key $name; $done++ }
             finally { $null = Invoke-RegUnload $key }
@@ -672,7 +672,7 @@ if ($Decisions.VfxExisting) {
 
 Write-Step 11 "Profile hygiene" `
 "Deletes local profiles not used for N days at the next boot. Roaming-profile users just get their local cache
-rebuilt from AD. Also stops Windows silently changing a user's default printer to the last one they printed to —
+rebuilt from AD. Also stops Windows silently changing a user's default printer to the last one they printed to  - 
 a constant source of 'my printer changed' tickets on session hosts."
 
 if ($Decisions.ProfileCleanupDays -gt 0) {
@@ -712,7 +712,7 @@ Set-RegValue 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection' 'AllowTe
 
 Write-Step 13 "Windows Update behaviour" `
 "Never auto-reboot while users are logged on, and keep active hours covering the business day so a session host
-does not restart itself at 2 pm. This does NOT stop updates installing — patch cadence is still your job (and on
+does not restart itself at 2 pm. This does NOT stop updates installing - patch cadence is still your job (and on
 Server 2025 the RDP freeze regression is the reason to stay current)."
 
 $AU = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
@@ -754,7 +754,7 @@ Write-Step 15 "Deliberately NOT changed" `
 - DisablePagingExecutive / LargeSystemCache: folklore. Left at defaults.
 - TSplus configuration: AdminTool, HTML5 gateway, Universal Printer, TSplus session timeouts.
 - Firewall, listening port, RDP certificates.
-- Pagefile: review manually — a fixed-size pagefile is more predictable than system-managed on a loaded host."
+- Pagefile: review manually - a fixed-size pagefile is more predictable than system-managed on a loaded host."
 Write-Info "Reviewed."
 
 # =====================================================================================
@@ -778,14 +778,14 @@ if (-not $DryRun) {
         $body.Add("if ((cmd /c `"reg load `"`"$hk`"`" `"`"$file`"`" 2>&1`") -and `$LASTEXITCODE -eq 0) {")
         foreach ($l in $script:HiveRollback[$hk]) { $body.Add("    $l") }
         $body.Add("    [GC]::Collect(); [GC]::WaitForPendingFinalizers(); Start-Sleep -Milliseconds 300; `$null = cmd /c `"reg unload `"`"$hk`"`" 2>&1`"")
-        $body.Add("} else { Write-Warning `"Hive $file is in use (user logged on) — rerun this rollback later to restore it.`" }")
+        $body.Add("} else { Write-Warning `"Hive $file is in use (user logged on) - rerun this rollback later to restore it.`" }")
     }
-    ($header + "`n" + ($body -join "`n") + "`nWrite-Host 'Rollback complete — reboot to apply.' -ForegroundColor Yellow`n") | Set-Content -Path $Rollback -Encoding UTF8
+    ($header + "`n" + ($body -join "`n") + "`nWrite-Host 'Rollback complete - reboot to apply.' -ForegroundColor Yellow`n") | Set-Content -Path $Rollback -Encoding UTF8
 }
 
 Write-Banner "Summary"
 Write-Host ("  Host           : {0}  ({1} build {2}.{3})" -f $env:COMPUTERNAME, $osName, $build, $ubr)
-Write-Host ("  Changes made   : {0}{1}" -f $ChangeCount, $(if ($DryRun) { '  (dry run — nothing actually written)' } else { '' }))
+Write-Host ("  Changes made   : {0}{1}" -f $ChangeCount, $(if ($DryRun) { '  (dry run - nothing actually written)' } else { '' }))
 Write-Host ("  Warnings       : {0}" -f $WarnCount) -ForegroundColor $(if ($WarnCount) { 'Magenta' } else { 'Gray' })
 Write-Host ("  Rollback       : {0}" -f $(if ($DryRun) { 'not written (dry run)' } else { $Rollback }))
 Write-Host ("  Log            : {0}" -f $(if ($DryRun) { 'not written (dry run)' } else { $LogFile }))
@@ -800,7 +800,7 @@ Write-Host "    Next user logon  : visual effects, content-delivery, Edge/first-
 Write-Host "    After reboot     : $(if ($RebootReasons.Count) { $RebootReasons -join ', ' } else { 'nothing outstanding' }), profile cleanup, scheduler quantum"
 Write-Host ''
 Write-Host "  Verify after reconnecting (Ctrl+Alt+End is unaffected):" -ForegroundColor Cyan
-Write-Host "    - Client: click the connection-quality icon in the RDP bar → should show UDP if enabled and the client allows it"
+Write-Host "    - Client: click the connection-quality icon in the RDP bar -> should show UDP if enabled and the client allows it"
 Write-Host "    - Server: Get-ItemProperty '$TS_POL' | Format-List"
 Write-Host "    - Server: query session  (confirm disconnected sessions end after the configured window)"
 
@@ -811,7 +811,7 @@ if ($RebootNeeded -and -not $NoReboot -and -not $DryRun) {
     $others = Get-OtherSessionCount
     if ($others -gt 0) { Write-Warn "$others other user session(s) are active. Reboot out of hours." }
     if (Ask-YesNo "Reboot now to apply: $($RebootReasons -join ', ')?" $false) {
-        Write-Host "  Rebooting in 15 seconds — Ctrl+C to cancel." -ForegroundColor Yellow
+        Write-Host "  Rebooting in 15 seconds - Ctrl+C to cancel." -ForegroundColor Yellow
         Start-Sleep -Seconds 15
         Restart-Computer -Force
     } else {

@@ -11,16 +11,21 @@ Elevated PowerShell on the session host:
 ```powershell
 # Interactive — asks ~12 questions, then runs unattended
 Set-ExecutionPolicy -Scope Process Bypass -Force
-& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.0/Optimize-RDSHost.ps1)))
+& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.1/Optimize-RDSHost.ps1)))
 
 # Unattended — documented defaults (WAN-optimised, nothing that breaks connectivity)
-& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.0/Optimize-RDSHost.ps1))) -Unattended
+& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.1/Optimize-RDSHost.ps1))) -Unattended
 
 # Dry run — shows every change it would make, writes nothing
-& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.0/Optimize-RDSHost.ps1))) -WhatIf
+& ([ScriptBlock]::Create((Invoke-RestMethod https://raw.githubusercontent.com/vpscloud-au/rds-host-tuning/v1.0.1/Optimize-RDSHost.ps1))) -WhatIf
 ```
 
-Or download it and read it first — it's one file, and you should.
+Or download it and read it first — it's one file, and you should. A downloaded copy carries the browser's "mark of the web", so unblock it once:
+
+```powershell
+Unblock-File .\Optimize-RDSHost.ps1
+.\Optimize-RDSHost.ps1 -WhatIf
+```
 
 Every run writes a transcript and a **rollback script** to `C:\ProgramData\RDSOptimize\`. The rollback restores every value to exactly what it was.
 

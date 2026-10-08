@@ -2,6 +2,11 @@
 
 All notable changes to this project are documented here. Versions follow [SemVer](https://semver.org): patch = safe fixes, minor = new settings or prompts, major = a changed default that could alter behaviour on an existing host.
 
+## [1.0.1] - 2026-10-08
+
+- Fixed: script is now pure ASCII. The 1.0.0 file contained UTF-8 em dashes which Windows PowerShell 5.1 (no BOM) decoded as smart quotes, terminating strings early and producing parse errors. PowerShell 7 was unaffected.
+- README: added `Unblock-File` note for downloaded copies.
+
 ## [1.0.0] — 2026-10-08
 
 Initial release.
